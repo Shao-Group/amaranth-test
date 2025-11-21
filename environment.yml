@@ -1,0 +1,17 @@
+name: amaranth 
+
+channels:
+  - bioconda
+  - conda-forge
+
+dependencies:
+  - python=3.12
+  - nextflow=24.10.4
+  - stringtie=2.2.3
+  - scallop2=1.1.2
+  - gffread=0.12.7
+  - gffcompare=0.12.6
+  - rseqc=5.0.4
+  - pandas=2.2.3
+  - gxf2bed=0.2.5  
+  - samtools=1.21
