@@ -1,0 +1,31 @@
+[project]
+name = "amaranth-test"
+description = "Benchmarking pipeline for Amaranth transcript assembler"
+channels = ["conda-forge", "bioconda"]
+platforms = ["linux-64", "osx-64", "osx-arm64"]
+
+[dependencies]
+# Workflow engine
+nextflow = ">=24.10.4"
+
+# Transcript assemblers
+amaranth = "*"
+scallop2 = ">=1.1.2"
+stringtie = ">=2.2"
+
+# Evaluation & annotation tools
+gffcompare = ">=0.12.6"
+gffread = ">=0.12.7"
+gxf2bed = ">=0.2.5"
+samtools = ">=1.21"
+rseqc = ">=5.0.4"
+
+# Python & analysis libraries
+python = ">=3.12"
+pandas = ">=2.2.3"
+numpy = "*"
+matplotlib = "*"
+seaborn = "*"
+scipy = "*"
+pybedtools = "*"
+pysam = "*"

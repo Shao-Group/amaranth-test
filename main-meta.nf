@@ -1,6 +1,9 @@
 #!/usr/bin/env nextflow
 
-// global variable
+// Meta-assembly transcript benchmarking workflow.
+//
+// Usage: nextflow run main-meta.nf -c params.config
+
 def current_time = new Date().format('yyyy-MM-dd_HH-mm-ss')
 
 process GETBEDFROMGTF {
@@ -61,81 +64,78 @@ process INFEREXPERIMENT {
     """
 }
 
-process RUNSTRINGTIE {
+process RUNAMARANTH_META {
     input:
-    tuple val(id), path(bam), path(libtype)
+    path(bam_list)
 
     output:
-    path "${id}.stg.gtf", emit: gtf
+    path "amaranth_meta_cell_*.gtf", emit: gtf
 
-    publishDir "${params.output_dir}/stringtie", mode: 'copy', overwrite: true
+    publishDir "${params.output_dir}/amaranth-meta-${current_time}", mode: 'copy', overwrite: true
 
     script:
     """
-    strand=\$(tail -n 1 ${libtype})
+    samtools merge -f merged.bam -b ${bam_list}
+    
+    mkdir meta
+    amaranth --meta -i merged.bam \
+        -o meta/amaranth 
 
-    if [[ ! "\${strand}" =~ ^(RF|FR|Unkown)\$ ]]; then
-        echo "Invalid strand: \${strand}"
-        exit 1
-    fi
+    mkdir single
+    for bam in \$(cat ${bam_list}); do
+        amaranth -i \${bam} \
+            -o single/\$(basename \${bam} .bam).amaranth
+    done
 
-    if [ "\${strand}" == "Unkown" ]; then
-        lib_type=""
-    elif [ "\${strand}" == "RF" ]; then
-        lib_type="--rf"
-    else
-        lib_type="--fr"
-    fi
+    meta_files=(\$(ls meta/*.gtf | sort))
+    single_files=(\$(ls single/*.gtf | sort))
 
-    stringtie \${lib_type} -o ${id}.stg.gtf ${bam}
+    for i in \$(seq 0 \$((\${#meta_files[@]} - 1))); do
+        gtfmerge union "\${meta_files[\$i]}" "\${single_files[\$i]}" > "amaranth_meta_cell_\${i}.gtf"
+    done
+
     """
 }
 
-process RUNSCALLOP2 {
+process RUNPSICLASS {
     input:
-    tuple val(id), path(bam), path(libtype)
+    path bam_list
 
     output:
-    path "${id}.sc2.gtf", emit: gtf
+    path "psiclass*.gtf", emit: gtf
 
-    publishDir "${params.output_dir}/scallop2", mode: 'copy', overwrite: true
+    publishDir "${params.output_dir}/psiclass", mode: 'copy', overwrite: true
 
     script:
+    def vd = params.containsKey('psiclass_vd') ? params.psiclass_vd : 1
+    def threads = params.containsKey('psiclass_threads') ? params.psiclass_threads : 10
     """
-    strand=\$(tail -n 1 ${libtype})
-
-    if [[ ! "\${strand}" =~ ^(RF|FR|Unkown)\$ ]]; then
-        echo "Invalid strand: \${strand}"
-        exit 1
-    fi
-
-    if [ "\${strand}" == "Unkown" ]; then
-        lib_type=""
-    elif [ "\${strand}" == "RF" ]; then
-        lib_type="--library_type first"
-    else
-        lib_type="--library_type second"
-    fi
-
-    scallop2 -i ${bam} \${lib_type} -o ${id}.sc2.gtf
+    psiclass --lb ${bam_list} -o ./ --vd ${vd} -p ${threads}
     """
 }
 
-process RUNAMARANTH {
+process RUNALETSCH {
     input:
-    tuple val(id), path(bam), path(_libtype)
+    path bam_list
 
     output:
-    path "${id}.amaranth.gtf", emit: gtf
+    path "*.gtf", emit: gtf
 
-    publishDir "${params.output_dir}/amaranth-${current_time}", mode: 'copy', overwrite: true
+    publishDir "${params.output_dir}/aletsch", mode: 'copy', overwrite: true
 
     script:
-
+    def c_param = params.containsKey('aletsch_c') ? params.aletsch_c : null
     """
-    amaranth -i ${bam} \
-                            --gene_name_prefix cell_${id}. \
-                            -o ${id}.amaranth
+    aletsch --profile -i ${bam_list} -p profile > profile.preview
+
+    if [ -z "${c_param}" ]; then
+        num=\$(wc -l < ${bam_list})
+        c=\$((2 * num))
+    else
+        c=${c_param}
+    fi
+
+    aletsch -i ${bam_list} -o meta.gtf -d gtf -p profile -c \${c} > aletsch.log
     """
 }
 
@@ -146,7 +146,6 @@ process RUNGFFCOMPARE {
 
     output:
     path "${gtf.baseName}.stats", emit: statsfile
-    path "*.tmap", emit: tmapfile
 
     publishDir "${params.output_dir}/gffcpr-${current_time}", mode: 'copy', overwrite: true
 
@@ -166,32 +165,26 @@ process RUNGFFCOMPARE {
     """
 }
 
-
 workflow {
-    println "Starting workflow at ${current_time}"
-
+    println "Starting meta-assembly workflow at ${current_time}"
 
     bams_ch = Channel.fromPath(params.bam_files)
-        .map { bam -> 
+        .map { bam ->
             def sample_id = bam.baseName
             tuple(sample_id, bam)
         }
 
-    bed = GETBEDFROMGTF(params.reference_gtf)
-
-    lib = INFEREXPERIMENT(bams_ch.combine(bed.out))
-
     // Run tools
-    sc2 = RUNSCALLOP2(lib)
-    stg = RUNSTRINGTIE(lib)
-    amr = RUNAMARANTH(lib)
+    bam_list = bams_ch.map { it[1] }.collectFile(name: 'bam.list', newLine: true)
+    amr = RUNAMARANTH_META(bam_list)
+    psi = RUNPSICLASS(bam_list)
+    alt = RUNALETSCH(bam_list)
 
-    // Channel gtf, run IRtools
-    gtf_assemblies_ch = sc2.gtf.map { gtf -> tuple(gtf, 'scallop2') }
-        .mix(stg.gtf.map { gtf -> tuple(gtf, 'stringtie') })
-        .mix(amr.gtf.map { gtf -> tuple(gtf, 'amaranth') })
+    // Channel gtf, run gffcompare
+    gtf_assemblies_ch = amr.gtf.map { gtf -> tuple(gtf, 'amaranth-meta') }
+        .mix(psi.gtf.map { gtf -> tuple(gtf, 'psiclass') })
+        .mix(alt.gtf.map { gtf -> tuple(gtf, 'aletsch') })
 
-    
-    // evaluate gtf intron-chain level
+    // evaluate gtf
     gffcpr = RUNGFFCOMPARE(gtf_assemblies_ch, params.reference_gtf)
 }

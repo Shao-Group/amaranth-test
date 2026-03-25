@@ -182,8 +182,6 @@ results*/
 test*/
 default.profraw
 data*/
-*.config
-*.nf
 !main.nf
 !explore.nf
 !modules.nf
@@ -196,3 +194,4 @@ plots_hs_refseq/all.scatter.pdf
 *results
 log.*
 *.log2
+*.lock
